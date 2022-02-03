@@ -6,49 +6,151 @@
 # If you have no legal moves then you forfeit your turn
 # If both players have no legal moves the match ends in a draw
 # win by eliminating all of your opponents pieces
-# draw if three repeat board positions or 20* consecutive moves with no pieces taken
+# draw if three repeat board positions or 20* consecutive moves with no pieces taken or no king promotion
 # *might change number
 # (draw logic not implemented)
 
+import numpy as np
+
 # Global variables
 PLAYER1 = 1
-PLAYER2 = 2
+PLAYER2 = -1
+# For encoding board positions
+ALPHABET = "abcdefghijklmnopqrstuvwxyz"
 
 
 class Draughts:
     def __init__(self) -> None:
-        self.board = [[2, 0, 2, 0, 2, 0, 2, 0],
-                      [0, 2, 0, 2, 0, 2, 0, 2],
-                      [2, 0, 2, 0, 2, 0, 2, 0],
+        self.board = [[PLAYER2, 0, PLAYER2, 0, PLAYER2, 0, PLAYER2, 0],
+                      [0, PLAYER2, 0, PLAYER2, 0, PLAYER2, 0, PLAYER2],
+                      [PLAYER2, 0, PLAYER2, 0, PLAYER2, 0, PLAYER2, 0],
                       [0, 0, 0, 0, 0, 0, 0, 0],
                       [0, 0, 0, 0, 0, 0, 0, 0],
-                      [0, 1, 0, 1, 0, 1, 0, 1],
-                      [1, 0, 1, 0, 1, 0, 1, 0],
-                      [0, 1, 0, 1, 0, 1, 0, 1]]
+                      [0, PLAYER1, 0, PLAYER1, 0, PLAYER1, 0, PLAYER1],
+                      [PLAYER1, 0, PLAYER1, 0, PLAYER1, 0, PLAYER1, 0],
+                      [0, PLAYER1, 0, PLAYER1, 0, PLAYER1, 0, PLAYER1]]
         self.turn = PLAYER1
         self.pieces = [12, 12]
         self.playing = False
         self.valid_moves = ["LU", "LD", "RU", "RD"]
 
-    def printBoard(self) -> None:
-        print("x", [i for i in range(8)])
-        for i, row in enumerate(self.board):
-            print(f"{i} {row}")
+    def printBoard(self, board: list = None) -> None:
+        pboard = {0: "   ", PLAYER1: " a ", PLAYER2: " b ", 2 * PLAYER1: " A ", 2 * PLAYER2: " B "}
+        if board is None:
+            board = self.board
+        yaxis = "x|"
+        for i in range(8):
+            yaxis += f" {i} "
+        print(yaxis + "|")
+        for i, row in enumerate(board):
+            rowstring = f"{i}|"
+            for j, col in enumerate(row):
+                if (i + j) % 2 == 0 and col == 0:
+                    rowstring += " o "
+                else:
+                    rowstring += pboard[col]
+            print(rowstring + "|")
 
-    def evalBoard(self, board: list, player: int) -> int:
+    def evalBoard(self, player: int, board: list = None) -> float:
+        if board is None:
+            board = self.board
         score = 0
         for y, row in enumerate(board):
-            for x, col in enumerate(row):
-                p = board[y][x]
-                if p == player:
-                    score += 1
-                elif p == player + 2:
+            for x, p in enumerate(row):
+                if p == PLAYER1:
+                    score += 1 + (7 - y) / 7
+                elif p == PLAYER2:
+                    score -= 1 + y / 7
+                elif p == 2 * PLAYER1:
                     score += 2
-                elif p == 3 - player:
-                    score -= 1
-                elif score == 5 - player:
+                elif p == 2 * PLAYER2:
                     score -= 2
-        return score
+
+        return round(np.tanh(score * (PLAYER1 + PLAYER2 - 2 * player) / (4 * (PLAYER2 - PLAYER1))), 2)
+
+    def encodeBoard(self, board=None, letters: str = "aAbBn", lcode: bool = False):
+        if board is None:
+            board = self.board
+        # 32 character encoding
+        longcode = ""
+        for y, row in enumerate(board):
+            for x, col in enumerate(row):
+                if (x + y) % 2 == 0:
+                    if col == PLAYER1:
+                        longcode += letters[0]
+                    elif col == 2 * PLAYER1:
+                        longcode += letters[1]
+                    elif col == PLAYER2:
+                        longcode += letters[2]
+                    elif col == 2 * PLAYER2:
+                        longcode += letters[3]
+                    elif col == 0:
+                        longcode += letters[4]
+        # 16 character encoding
+        shortcode = ""
+        for l in range(16):
+            x = longcode[2 * l]
+            y = longcode[2 * l + 1]
+            i = 6
+            j = 6
+            for a in range(5):
+                if letters[a] == x:
+                    i = a
+                if letters[a] == y:
+                    j = a
+                if i < 6 and j < 6:
+                    break
+            shortcode += ALPHABET[5 * i + j]
+        if lcode:
+            return shortcode, longcode
+        else:
+            return shortcode
+
+    def decodeBoard(self, encoding: str, letters: str = "aAbBn"):
+        newboard = []
+        piece_dict = {0: PLAYER1, 1: 2 * PLAYER1, 2: PLAYER2, 3: 2 * PLAYER2, 4: 0}
+        if len(encoding) == 16:
+            for y in range(8):
+                row = []
+                for x in range(8):
+                    if y % 2 == 0 and x % 4 == 0 or y % 2 == 1 and x % 4 == 1:
+                        i = 2 * y + (x - (y % 2)) / 4
+                        e = encoding[int(i)]
+                        l = 0
+                        for j in range(25):
+                            if ALPHABET[j] == e:
+                                l = j
+                                break
+                        s1 = l // 5
+                        s2 = l % 5
+                        if y % 2 == 0:
+                            row.append(piece_dict[s1])
+                            row.append(0)
+                            row.append(piece_dict[s2])
+                            row.append(0)
+                        else:
+                            row.append(0)
+                            row.append(piece_dict[s1])
+                            row.append(0)
+                            row.append(piece_dict[s2])
+                newboard.append(row)
+        elif len(encoding) == 32:
+            for y in range(8):
+                row = []
+                for x in range(8):
+                    if (x + y) % 2 == 0:
+                        i = 4 * y + (x - (y % 2)) / 2
+                        e = encoding[int(i)]
+                        l = 0
+                        while letters[l] != e:
+                            l += 1
+                            if letters[l] == e:
+                                break
+                        row.append(piece_dict[l])
+                    else:
+                        row.append(0)
+                newboard.append(row)
+        return newboard
 
     def isValMove(self, piece: list, move_type: str):
         x = piece[0]
@@ -63,16 +165,17 @@ class Draughts:
         else:
             y_ = 1
         # Check if piece can move in that direction
-        if (p - 1) // 2 == 0 and self.turn == (3 - y_) / 2:
+        if self.turn == (PLAYER1 + PLAYER2 + (PLAYER1 - PLAYER2) * y_) / 2 and p == self.turn:
             return False, False
         # Check if piece will go off the board
         elif x == 7 * (1 + x_) / 2 or y == 7 * (1 + y_) / 2:
             return False, False
-        # Check if move obstructed
-        elif self.board[y + y_][x + x_] != 0 and self.board[y + y_][x + x_] % 2 == self.turn % 2:
+        # Check if move obstructed by friendly piece
+        elif self.board[y + y_][x + x_] != 0 and (self.board[y + y_][x + x_] == self.turn
+                                                  or self.board[y + y_][x + x_] == 2 * self.turn):
             return False, False
         # Check if a valid take
-        elif self.board[y + y_][x + x_] == PLAYER1 + PLAYER2 - self.turn:
+        elif self.board[y + y_][x + x_] in (PLAYER1 + PLAYER2 - self.turn, 2 * (PLAYER1 + PLAYER2 - self.turn)):
             if x == (5 * x_ + 7) / 2 or y == (5 * y_ + 7) / 2 or self.board[y + 2 * y_][x + 2 * x_] != 0:
                 return False, True
             else:
@@ -95,7 +198,7 @@ class Draughts:
         else:
             for y, row in enumerate(board):
                 for x, col in enumerate(row):
-                    if col > 0 and col % 2 == player % 2:
+                    if col != 0 and (col == player or col == 2 * player):
                         p = [x, y]
                         # List of legal moves for the piece
                         n = []
@@ -114,11 +217,13 @@ class Draughts:
                             legal_moves[f"{x}{y}"] = n
         return legal_moves
 
-    def move(self, piece: list, move_type: str):
+    def move(self, piece: list, move_type: str, internalboard=None):
+        if internalboard is None:
+            internalboard = self.board
         if self.isValMove(piece, move_type):
             x = piece[0]
             y = piece[1]
-            p = self.board[y][x]
+            p = internalboard[y][x]
             if "L" in move_type:
                 x_ = -1
             else:
@@ -128,30 +233,30 @@ class Draughts:
             else:
                 y_ = 1
             # Checks players piece is being moved
-            if p % 2 == self.turn % 2:
+            if p == self.turn or p == 2 * self.turn:
                 # Empty Square
-                if self.board[y + y_][x + x_] == 0:
+                if internalboard[y + y_][x + x_] == 0:
                     # Checks for king promotion
-                    if y == 5 * self.turn - 4 and (p - 1) // 2 == 0:
-                        self.board[y + y_][x + x_] = p + 2
+                    if y == (5 * self.turn + PLAYER2 - 6 * PLAYER1) / (PLAYER2 - PLAYER1) and p in (PLAYER1, PLAYER2):
+                        internalboard[y + y_][x + x_] = p * 2
                     else:
-                        self.board[y + y_][x + x_] = p
+                        internalboard[y + y_][x + x_] = p
                     # Turn current square to empty
-                    self.board[y][x] = 0
+                    internalboard[y][x] = 0
                     return 0, [x + x_, y + y_]
                 # Taking a piece with a normal piece
-                elif (p - 1) // 2 == 0:
-                    self.board[y + y_][x + x_] = 0
-                    self.pieces[2 - self.turn] -= 1
+                elif p in (PLAYER1, PLAYER2):
+                    internalboard[y + y_][x + x_] = 0
+                    self.pieces[round((PLAYER2 - self.turn) / (PLAYER2 - PLAYER1))] -= 1
                     # Checks for king promotion
-                    if y == 3 * self.turn - 1:
-                        self.board[y + 2 * y_][x + 2 * x_] = p + 2
+                    if p == PLAYER1 and y + 2 * y_ == 0 or p == PLAYER2 and y + 2 * y_ == 7:
+                        internalboard[y + 2 * y_][x + 2 * x_] = p * 2
                     else:
-                        self.board[y + 2 * y_][x + 2 * x_] = p
+                        internalboard[y + 2 * y_][x + 2 * x_] = p
                     # Turn current square to empty
-                    self.board[y][x] = 0
+                    internalboard[y][x] = 0
                     # Find the new legal moves
-                    l_m = self.legalMoves(self.turn, self.board, [x + 2 * x_, y + 2 * y_])
+                    l_m = self.legalMoves(self.turn, internalboard, [x + 2 * x_, y + 2 * y_])
                     n = l_m[f"{x + 2 * x_}{y + 2 * y_}"]
                     if len(n) == 0:
                         return 0, [x + 2 * x_, y + 2 * y_]
@@ -159,13 +264,13 @@ class Draughts:
                         return 1, [x + 2 * x_, y + 2 * y_]
                 # Taking a piece with a king
                 else:
-                    self.board[y + y_][x + x_] = 0
-                    self.pieces[2 - self.turn] -= 1
-                    self.board[y + 2 * y_][x + 2 * x_] = p
+                    internalboard[y + y_][x + x_] = 0
+                    self.pieces[round((PLAYER2 - self.turn) / (PLAYER2 - PLAYER1))] -= 1
+                    internalboard[y + 2 * y_][x + 2 * x_] = p
                     # Turn current square to empty
-                    self.board[y][x] = 0
+                    internalboard[y][x] = 0
                     # Find the new legal moves
-                    l_m = self.legalMoves(self.turn, self.board, [x + 2 * x_, y + 2 * y_])
+                    l_m = self.legalMoves(self.turn, internalboard, [x + 2 * x_, y + 2 * y_])
                     n = l_m[f"{x + 2 * x_}{y + 2 * y_}"]
                     if len(n) == 0:
                         return 0, [x + 2 * x_, y + 2 * y_]
@@ -175,14 +280,16 @@ class Draughts:
 
     def playGame(self) -> None:
         self.playing = True
+        evalhist = []
         turn_count = 0
         nlm = 0
         while self.playing:
             p = None
             avail_moves = 1
-            if self.turn == 1:
+            if self.turn == PLAYER1:
+                evalhist.append(self.evalBoard(self.turn))
                 turn_count += 1
-            print(f"===== Player {self.turn} Turn {turn_count} =====")
+            print(f"===== Player {self.turn} Turn {turn_count} Eval: {self.evalBoard(self.turn)} =====")
             self.printBoard()
             while avail_moves != 0:
                 l_m = self.legalMoves(self.turn, self.board, p)
@@ -226,8 +333,8 @@ class Draughts:
                 avail_moves, p = self.move(piece, m)
             # End Conditions
             # One player has lost all their pieces
-            if self.pieces[self.turn - 1] == 0:
-                print(f"Game over player {3 - self.turn} wins!")
+            if self.pieces[round((self.turn - PLAYER1) / (PLAYER2 - PLAYER1))] == 0:
+                print(f"Game over player {PLAYER1 + PLAYER2 - self.turn} wins!")
                 self.playing = False
             # Draw if both players have no legal moves (goes through two full cycles to make double sure)
             elif nlm == 4:
@@ -235,8 +342,27 @@ class Draughts:
                 self.playing = False
             # Start new turn
             else:
-                self.turn = 3 - self.turn
+                self.turn = PLAYER1 + PLAYER2 - self.turn
+        print(f"Evaluation History: {evalhist}")
+
+    def getPossBoards(self, encodedboard: str, player: int) -> dict:
+        defboard = self.decodeBoard(encodedboard)
+        newboards = {}
+        p = None
+        avail_moves = 1
+        lm = self.legalMoves(player, defboard, p)
+        for piece in lm:
+            for direction in lm[piece]:
+                simboard = np.copy(defboard)
+                newmove = piece + dir
+                while avail_moves != 0:
+                    avail_moves, p = self.move([int(piece[0]), int(piece[1])], direction, simboard)
+                    # Trying to figure out what to do with multiple moves in a turn
+                newboards[newmove] = self.encodeBoard(simboard)
+
+        return newboards
 
 
 if __name__ == "__main__":
-    Draughts().playGame()
+    dr = Draughts()
+    dr.playGame()
