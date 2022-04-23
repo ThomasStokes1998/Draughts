@@ -1,6 +1,11 @@
 # Naughts and Crosses Game for testing alpha-zero type algorithm
 import time
 import math
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+from keras import layers, Input
+from keras.models import load_model
 
 
 def decodeBoard(encode: int, listformat=False):
@@ -244,8 +249,14 @@ class TrainNetwork:
         movekeys_ = []
         wdllists_ = []
         lastint = 0
+        t0 = time.time()
         for g in range(games):
             movekeys, wdllist = self.simGame(policy)
+            
+            if g % 10 == 9:
+                dt = time.time() - t0
+                print(f"Finished training on {g+1} games. {round(dt, 3)}seconds")
+                t0 = time.time()
             if round(g * trainprop) > lastint:
                 for i, m in enumerate(movekeys):
                     movekeys_.append(m)
@@ -266,6 +277,7 @@ class TrainNetwork:
             print(f"Average time per game: {round(dt1 / games, 2)} seconds.")
             x_train = []
             y_train = []
+            t1 = time.time()
             for i, m in enumerate(movekeys_):
                 x_train.append(decodeBoard(m))
                 m_train = []
@@ -282,6 +294,8 @@ class TrainNetwork:
                 m_train.append(wdllists_[i])
                 y_train.append(m_train)
             # Train the policy network
+            dt = time.time() - t1
+            print(f"{round(dt, 3)} seconds.")
             policy.fit(x_train, y_train, batch_size=batchsize, epochs=epochs)
             # Saves trained model before the next cycle
             policy.save(f"nacnn{startgen + gen + 1}.h5")
@@ -291,5 +305,10 @@ class TrainNetwork:
 
 
 if __name__ == "__main__":
-    nac = NAC()
-    nac.playGame()
+    tn = TrainNetwork()
+    #policy = buildModel()f"
+    policy = load_model("nacnn4.h5")
+    tn.trainModel(1, 15000, policy, trainprop=1)
+
+
+
