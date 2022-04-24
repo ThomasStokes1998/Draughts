@@ -1,4 +1,4 @@
-# Naughts and Crosses Game for testing alpha-zero type algorithm
+# Noughts and Crosses Game for testing alpha-zero type algorithm
 import time
 import math
 import numpy as np
@@ -306,7 +306,6 @@ class TrainNetwork:
 
 if __name__ == "__main__":
     tn = TrainNetwork()
-    #policy = buildModel()f"
     policy = load_model("nacnn4.h5")
     tn.trainModel(1, 15000, policy, trainprop=1)
 
