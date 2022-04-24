@@ -44,15 +44,19 @@ class Node:
 
     def score(self):
         if self.visits == 0:
-            return 0.5
+            return self.val
         else:
             return (self.wins + 0.5 * self.draws) / self.visits
 
     def value(self):
         if self.visits == 0:
-            return self.val
+            return self.priorprob
         else:
             return self.wins / self.visits
+
+    def updateValue(self):
+        if self.expanded:
+            self.val = 1 - np.mean([self.node[child].val for _, child in enumerate(self.childkeys)])
 
 
 class NAC:
@@ -117,6 +121,18 @@ class NAC:
         if sum([board[i][2 - i] for i in range(3)]) == 3 * turn:
             return True
         return False
+
+    def reward(self, board=None, turn: int = 1):
+        if board is None:
+            board = self.board
+        if self.checkWin(turn, board):
+            return 1
+        elif self.checkWin(-turn, board):
+            return 0
+        elif len(self.getLegalMoves(board)) == 0:
+            return 0.5
+        else:
+            return None
 
     def encodeBoard(self, board=None) -> int:
         e = 0
@@ -184,11 +200,78 @@ class NAC:
 
 
 class TrainNetwork:
-    def __init__(self):
+    def __init__(self, policy):
         self.nac = NAC()
         self.nodes = {}
+        self.policy = policy
 
-    def simGame(self, policy):
+    def expandNode(self, nodekey: int, policy=None):
+        if policy is None:
+            policy = self.policy
+        parent = self.nodes[nodekey]
+        parentboard = decodeBoard(nodekey)
+        if self.nac.reward(parentboard) is None:
+            evals = policy.predict([parentboard])[0]
+            lmoves = self.nac.getLegalMoves(parentboard)
+            flippedparentboard = self.nac.flipBoard(parentboard)
+            for l in lmoves:
+                newboard = self.nac.move(l, 1, flippedparentboard, True)
+                newkey = self.nac.encodeBoard(newboard)
+                newevals = policy.predict([newboard])[0]
+                self.nodes[nodekey].childkeys[l] = newkey
+                if newkey not in self.nodes:
+                    if self.nac.reward(newboard) is None:
+                        self.nodes[newkey] = Node(evals[l], newevals[-1])
+                    else:
+                        self.nodes[newkey] = Node(evals[l], self.nac.reward(newboard))
+            if len(lmoves) > 0:
+                parent.expanded = True
+
+    def getNewNode(self, nodekey: int, policy=None):
+        if policy is None:
+            policy = self.policy
+        parent = self.nodes[nodekey]
+        parentboard = decodeBoard(nodekey)
+        lmoves = self.nac.getLegalMoves(parentboard)
+        globalmaxeval = 0
+        globalmaxmove = 0
+        globalmaxvisits = 0
+        globalmaxkey = nodekey
+        maxeval = -1
+        maxmove = -1
+        maxkey = -1
+        for l in lmoves:
+            childkey = parent.childkeys[l]
+            child = self.nodes[childkey]
+            if child.priorprob > globalmaxeval:
+                globalmaxeval = child.priorprob
+                globalmaxmove = l
+                globalmaxvisits = child.visits
+                globalmaxkey = childkey
+            if not child.expanded and child.priorprob > maxeval:
+                maxeval = child.priorprob
+                maxmove = l
+                maxkey = childkey
+        # If all the nodes have been expanded pick the highest scoring node which has been visited the least
+        if maxmove == -1:
+            maxvisits = globalmaxvisits
+            for l in lmoves:
+                childkey = parent.childkeys[l]
+                child = self.nodes[childkey]
+                if child.visits < globalmaxvisits and child.visits <= maxvisits and child.priorprob > maxeval:
+                    maxeval = child.priorprob
+                    maxmove = l
+                    maxkey = childkey
+                    maxvisits = child.visits
+        # If all the nodes have been expanded the same amount pick the highest scoring node
+        if maxmove == -1:
+            maxmove = globalmaxmove
+            maxkey = globalmaxkey
+        return maxmove, maxkey
+
+    def simGame(self, policy=None):
+        if policy is None:
+            policy = self.policy
         self.nac.resetBoard()
         turn_counter = 0
         playing = True
@@ -245,17 +328,19 @@ class TrainNetwork:
             self.nac.board = self.nac.flipBoard()
         return movekeys, wdllist
 
-    def playGames(self, games: int, policy, trainprop: float):
+    def playGames(self, games: int, trainprop: float, policy=None):
+        if policy is None:
+            policy = self.policy
         movekeys_ = []
         wdllists_ = []
         lastint = 0
         t0 = time.time()
         for g in range(games):
             movekeys, wdllist = self.simGame(policy)
-            
+
             if g % 10 == 9:
                 dt = time.time() - t0
-                print(f"Finished training on {g+1} games. {round(dt, 3)}seconds")
+                print(f"Finished training on {g + 1} games. {round(dt, 3)}seconds")
                 t0 = time.time()
             if round(g * trainprop) > lastint:
                 for i, m in enumerate(movekeys):
@@ -264,8 +349,10 @@ class TrainNetwork:
                 lastint = round(g * trainprop)
         return movekeys_, wdllists_
 
-    def trainModel(self, generations: int, games: int, policy, trainprop: float = 0.9, batchsize: int = 32,
+    def trainModel(self, generations: int, games: int, policy=None, trainprop: float = 0.9, batchsize: int = 32,
                    epochs: int = 5, startgen: int = 0):
+        if policy is None:
+            policy = self.policy
         for gen in range(generations):
             # Reset training environment
             self.nodes = {}
@@ -300,14 +387,49 @@ class TrainNetwork:
             # Saves trained model before the next cycle
             policy.save(f"nacnn{startgen + gen + 1}.h5")
 
-    def run(self, iterations: int, policy, board: list):
-        pass
+    def run(self, iterations: int, board: list, policy=None):
+        if policy is None:
+            policy = self.policy
+        self.nodes = {}
+        # Create the root node
+        root_evals = policy.predict([board])[0]
+        rootkey = self.nac.encodeBoard(board)
+        self.nodes[rootkey] = Node(1, root_evals[-1])
+        root = self.nodes[rootkey]
+        # Expand the root node
+        self.expandNode(rootkey, policy)
+        for _ in range(iterations):
+            current_node = root
+            search_path = [rootkey]
+            # Go down the tree until a new node is expanded
+            while current_node.expanded:
+                newmove, newnodekey = self.getNewNode(search_path[-1], policy)
+                search_path.append(newnodekey)
+                current_node = self.nodes[newnodekey]
+            # Expand the new node
+            self.expandNode(search_path[-1], policy)
+            # Propagate the values back up the tree
+            for i in range(len(search_path) - 1, -1, -1):
+                nodekey = search_path[i]
+                nodeboard = decodeBoard(nodekey)
+                if self.nac.reward(nodeboard) is None:
+                    self.nodes[nodekey].updateValue()
+                else:
+                    self.nodes[nodekey].val = self.nac.reward(nodeboard)
+                self.nodes[nodekey].visits += 1
+        # Pick the best move from the expansions
+        maxval = 0
+        maxmove = 0
+        for l in root.childkeys:
+            childkey = root.childkeys[l]
+            if self.nodes[childkey].val > maxval:
+                maxmove = l
+                maxval = self.nodes[childkey].val
+
+        return maxmove
 
 
 if __name__ == "__main__":
-    tn = TrainNetwork()
     policy = load_model("nacnn4.h5")
-    tn.trainModel(1, 15000, policy, trainprop=1)
-
-
-
+    tn = TrainNetwork(policy)
+    tn.trainModel(1, 15000, trainprop=1)
