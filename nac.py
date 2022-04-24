@@ -54,10 +54,6 @@ class Node:
         else:
             return self.wins / self.visits
 
-    def updateValue(self):
-        if self.expanded:
-            self.val = 1 - np.mean([self.node[child].val for _, child in enumerate(self.childkeys)])
-
 
 class NAC:
     def __init__(self) -> None:
@@ -205,6 +201,11 @@ class TrainNetwork:
         self.nodes = {}
         self.policy = policy
 
+    def updateValue(self, nodekey: int):
+        parent = self.nodes[nodekey]
+        if parent.expanded:
+            parent.val = 1 - np.mean([self.nodes[parent.childkeys[l]].val for l in parent.childkeys])
+
     def expandNode(self, nodekey: int, policy=None):
         if policy is None:
             policy = self.policy
@@ -213,11 +214,11 @@ class TrainNetwork:
         if self.nac.reward(parentboard) is None:
             evals = policy.predict([parentboard])[0]
             lmoves = self.nac.getLegalMoves(parentboard)
-            flippedparentboard = self.nac.flipBoard(parentboard)
             for l in lmoves:
-                newboard = self.nac.move(l, 1, flippedparentboard, True)
-                newkey = self.nac.encodeBoard(newboard)
-                newevals = policy.predict([newboard])[0]
+                newboard = self.nac.move(l, 1, parentboard, True)
+                flippednewboard = self.nac.flipBoard(newboard)
+                newkey = self.nac.encodeBoard(flippednewboard)
+                newevals = policy.predict([flippednewboard])[0]
                 self.nodes[nodekey].childkeys[l] = newkey
                 if newkey not in self.nodes:
                     if self.nac.reward(newboard) is None:
@@ -248,7 +249,7 @@ class TrainNetwork:
                 globalmaxmove = l
                 globalmaxvisits = child.visits
                 globalmaxkey = childkey
-            if not child.expanded and child.priorprob > maxeval:
+            if not child.expanded and child.priorprob > maxeval and child.visits < globalmaxvisits:
                 maxeval = child.priorprob
                 maxmove = l
                 maxkey = childkey
@@ -308,48 +309,31 @@ class TrainNetwork:
             if turn_counter >= 4:
                 iswon = self.nac.checkWin(self.nac.player1)
                 if iswon:
-                    wdllist = []
                     for i, mk in enumerate(movekeys):
                         self.nodes[mk].visits += 1
                         if i % 2 == turn_counter % 2:
                             self.nodes[mk].wins += 1
-                            wdllist.append(1)
-                        else:
-                            wdllist.append(0)
                     playing = False
                 elif turn_counter == 8:
-                    wdllist = []
                     for i, mk in enumerate(movekeys):
                         self.nodes[mk].draws += 1
                         self.nodes[mk].visits += 1
-                        wdllist.append(0.5)
                     playing = False
             turn_counter += 1
             self.nac.board = self.nac.flipBoard()
-        return movekeys, wdllist
 
-    def playGames(self, games: int, trainprop: float, policy=None):
+    def playGames(self, games: int, policy=None):
         if policy is None:
             policy = self.policy
-        movekeys_ = []
-        wdllists_ = []
-        lastint = 0
         t0 = time.time()
         for g in range(games):
-            movekeys, wdllist = self.simGame(policy)
-
-            if g % 10 == 9:
+            self.simGame(policy)
+            if g % 100 == 99:
                 dt = time.time() - t0
-                print(f"Finished training on {g + 1} games. {round(dt, 3)}seconds")
+                print(f"Finished training on {g + 1} games. {round(dt, 3)} seconds")
                 t0 = time.time()
-            if round(g * trainprop) > lastint:
-                for i, m in enumerate(movekeys):
-                    movekeys_.append(m)
-                    wdllists_.append(wdllist[i])
-                lastint = round(g * trainprop)
-        return movekeys_, wdllists_
 
-    def trainModel(self, generations: int, games: int, policy=None, trainprop: float = 0.9, batchsize: int = 32,
+    def trainModel(self, generations: int, games: int, policy=None, batchsize: int = 32,
                    epochs: int = 5, startgen: int = 0):
         if policy is None:
             policy = self.policy
@@ -358,36 +342,50 @@ class TrainNetwork:
             self.nodes = {}
             # Get all the raw training data
             t0 = time.time()
-            movekeys_, wdllists_ = self.playGames(games, policy, trainprop)
+            self.playGames(games, policy)
             dt1 = round(time.time() - t0)
             print(f"Took {dt1 // 60}:{dt1 % 60} to play {games} games.")
             print(f"Average time per game: {round(dt1 / games, 2)} seconds.")
             x_train = []
             y_train = []
             t1 = time.time()
-            for i, m in enumerate(movekeys_):
-                x_train.append(decodeBoard(m))
+            for nodekey in self.nodes:
                 m_train = []
-                if not self.nodes[m].expanded:
-                    for l in range(9):
-                        m_train.append(wdllists_[i])
+                board = decodeBoard(nodekey)
+                x_train.append(board)
+                node = self.nodes[nodekey]
+                # Getting the probability of a win from move
+                if self.nac.reward(board) is None:
+                    if node.expanded:
+                        for l in range(9):
+                            if l in node.childkeys:
+                                childkey = node.childkeys[l]
+                                m_train.append(self.nodes[childkey].value())
+                            else:
+                                m_train.append(0)
+                    else:
+                        for _ in range(9):
+                            m_train.append(node.priorprob)
+                    # Add the board evaluation
+                    m_train.append(node.score())
                 else:
-                    for l in range(9):
-                        if l in self.nodes[m].childkeys:
-                            ck = self.nodes[m].childkeys[l]
-                            m_train.append(self.nodes[ck].value())
-                        else:
+                    r = self.nac.reward(board)
+                    if r == 1:
+                        for _ in range(9):
+                            m_train.append(1)
+                    else:
+                        for _ in range(9):
                             m_train.append(0)
-                m_train.append(wdllists_[i])
+                    m_train.append(r)
                 y_train.append(m_train)
             # Train the policy network
             dt = time.time() - t1
-            print(f"{round(dt, 3)} seconds.")
+            print(f"Took {round(dt, 3)} seconds to generate training data.")
             policy.fit(x_train, y_train, batch_size=batchsize, epochs=epochs)
             # Saves trained model before the next cycle
             policy.save(f"nacnn{startgen + gen + 1}.h5")
 
-    def run(self, iterations: int, board: list, policy=None):
+    def run(self, iterations: int, board: list, policy=None, movevalues: bool = False):
         if policy is None:
             policy = self.policy
         self.nodes = {}
@@ -413,23 +411,65 @@ class TrainNetwork:
                 nodekey = search_path[i]
                 nodeboard = decodeBoard(nodekey)
                 if self.nac.reward(nodeboard) is None:
-                    self.nodes[nodekey].updateValue()
+                    self.updateValue(nodekey)
                 else:
-                    self.nodes[nodekey].val = self.nac.reward(nodeboard)
+                    self.nodes[nodekey].val = 1 - self.nac.reward(nodeboard)
                 self.nodes[nodekey].visits += 1
         # Pick the best move from the expansions
         maxval = 0
+        if movevalues:
+            allvals = {}
         maxmove = 0
         for l in root.childkeys:
             childkey = root.childkeys[l]
+            if movevalues:
+                allvals[l] = round(self.nodes[childkey].val, 3)
             if self.nodes[childkey].val > maxval:
                 maxmove = l
                 maxval = self.nodes[childkey].val
-
+        if movevalues:
+            return maxmove, allvals
         return maxmove
+
+    def testGame(self, iterations: int, policy1=None, policy2=None):
+        if policy1 is None:
+            policy1 = self.policy
+        if policy2 is None:
+            policy2 = self.policy
+        policies = [policy1, policy2]
+        self.nac.resetBoard()
+        playing = True
+        tc = 0
+        while playing:
+            flippedboard = self.nac.flipBoard()
+            evals = policies[tc % 2].predict([self.nac.board])[0]
+            print("Board Evaluation =", round(2 * evals[-1] - 1, 2))
+            if tc % 2 == 0:
+                self.nac.printBoard()
+            else:
+                self.nac.printBoard(flippedboard)
+            bestmove = self.run(iterations, self.nac.board, policies[tc % 2])
+            self.nac.move(bestmove, 1)
+            if tc >= 4:
+                if self.nac.checkWin(1):
+                    print(f"Player {1 + tc % 2} Wins!")
+                    if tc % 2 == 0:
+                        self.nac.printBoard()
+                    else:
+                        self.nac.printBoard(flippedboard)
+                    playing = False
+                elif tc == 8:
+                    print("Game ended in a draw!")
+                    if tc % 2 == 0:
+                        self.nac.printBoard()
+                    else:
+                        self.nac.printBoard(flippedboard)
+                    playing = False
+            self.nac.board = self.nac.flipBoard()
+            tc += 1
 
 
 if __name__ == "__main__":
     policy = load_model("nacnn4.h5")
     tn = TrainNetwork(policy)
-    tn.trainModel(1, 15000, trainprop=1)
+    tn.trainModel(1, 15000)
