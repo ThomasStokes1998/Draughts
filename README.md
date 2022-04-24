@@ -1,7 +1,7 @@
 ## AlphaZero Algorithm
 
-AlphaZero is an algorithm developed by Google's DeepMind team to train a neural network to play any 2 play perfect information game whose game states can be mapped out
-in a decision tree. The *nac.py* file is my own implementation of this algorithm for playing Naughts and Crosses.
+AlphaZero is an algorithm developed by Google's DeepMind team to train a neural network to play any 2 player perfect information game whose game states can be mapped 
+out in a decision tree. The *nac.py* file is my own implementation of this algorithm for playing Noughts and Crosses.
 
 ### How does AlphaZero Play?
 
