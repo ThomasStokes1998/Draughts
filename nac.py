@@ -204,7 +204,7 @@ class TrainNetwork:
     def updateValue(self, nodekey: int):
         parent = self.nodes[nodekey]
         if parent.expanded:
-            parent.val = 1 - np.mean([self.nodes[parent.childkeys[l]].val for l in parent.childkeys])
+            parent.val = 1 - np.max([self.nodes[parent.childkeys[l]].val for l in parent.childkeys])
 
     def expandNode(self, nodekey: int, policy=None):
         if policy is None:
